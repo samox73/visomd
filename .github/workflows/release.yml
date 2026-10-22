@@ -30,7 +30,12 @@ jobs:
       - run: |
           cp target/${{ matrix.target }}/release/viso .
           strip viso
-          tar czf viso-${{ matrix.arch }}-${{ matrix.os }}.tar.gz viso README.md LICENSE-MIT LICENSE-APACHE
+          mkdir completions
+          ./viso --completions bash > completions/viso.bash
+          ./viso --completions zsh > completions/_viso
+          ./viso --completions fish > completions/viso.fish
+          ./viso --completions nushell > completions/viso.nu
+          tar czf viso-${{ matrix.arch }}-${{ matrix.os }}.tar.gz viso completions README.md LICENSE-MIT LICENSE-APACHE
       - uses: actions/upload-artifact@v4
         with:
           name: viso-${{ matrix.target }}

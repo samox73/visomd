@@ -43,6 +43,13 @@ viso --debug-term           # what viso detects: size, cell pixels, foreground, 
 | `--theme NAME` | syntect theme for code blocks | `base16-ocean.dark` |
 | `--no-images` | print math as LaTeX | off |
 | `--print-config` | print every config key with its effective value | |
+| `--completions SHELL` | print a completion script for bash, zsh, fish or nushell | |
+
+Shell completions come from the binary itself, and the release tarballs carry them in `completions/`. nushell autoloads `~/.local/share/nushell/vendor/autoload`, so:
+
+```nu
+viso --completions nushell | save -f ~/.local/share/nushell/vendor/autoload/viso.nu
+```
 
 ## Config
 

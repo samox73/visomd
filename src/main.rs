@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::str::FromStr;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
 const DEFAULT_MAX_WIDTH: usize = 100;
 const DEFAULT_THEME: &str = "base16-ocean.dark";
@@ -46,6 +46,9 @@ struct Args {
     /// Print every config key with its effective value, as a config file, and exit
     #[arg(long)]
     print_config: bool,
+    /// Print a shell completion script and exit
+    #[arg(long, value_name = "SHELL", value_parser = ["bash", "zsh", "fish", "nushell"])]
+    completions: Option<String>,
     /// Print what viso detects about the terminal and exit
     #[arg(long)]
     debug_term: bool,
@@ -161,8 +164,28 @@ fn parse_rgb(s: &str) -> Option<[u8; 3]> {
     Some([(v >> 16) as u8, (v >> 8) as u8, v as u8])
 }
 
+/// The completion script for `shell`, one of the values `--completions` accepts.
+fn completions(shell: &str) -> Vec<u8> {
+    let mut cmd = Args::command();
+    let mut out = Vec::new();
+    match shell {
+        "nushell" => {
+            clap_complete::generate(clap_complete_nushell::Nushell, &mut cmd, "viso", &mut out)
+        }
+        other => {
+            let shell: clap_complete::Shell = other.parse().expect("validated by clap");
+            clap_complete::generate(shell, &mut cmd, "viso", &mut out);
+        }
+    }
+    out
+}
+
 fn main() -> ExitCode {
     let args = Args::parse();
+    if let Some(shell) = args.completions.as_deref() {
+        let _ = std::io::Write::write_all(&mut std::io::stdout(), &completions(shell));
+        return ExitCode::SUCCESS;
+    }
     let config_path = config_path();
     let cfg = load_config(config_path.as_ref());
     let settings = Settings::resolve(&args, &cfg);
@@ -288,6 +311,19 @@ mod tests {
         assert_eq!(setting::<usize>(&cfg, "bad"), None);
         assert_eq!(setting::<usize>(&cfg, "missing"), None);
         assert!(load_config(Some(&dir.join("nope"))).is_empty());
+    }
+
+    #[test]
+    fn completions_cover_the_flags() {
+        for shell in ["bash", "zsh", "fish", "nushell"] {
+            let script = String::from_utf8(completions(shell)).unwrap();
+            assert!(script.contains("display-scale"), "{shell}: {script}");
+        }
+        assert!(
+            String::from_utf8(completions("nushell"))
+                .unwrap()
+                .contains("export extern viso")
+        );
     }
 
     #[test]

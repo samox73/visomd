@@ -12,6 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4.6"
+clap_complete_nushell = "4.6"
 libc = "0.2"
 png = "0.17"
 pulldown-cmark = { version = "0.13", default-features = false }
