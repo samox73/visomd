@@ -4,6 +4,7 @@
 #
 #   nix shell nixpkgs#sway nixpkgs#grim nixpkgs#imagemagick -c nu assets/screenshot.nu                 # assets/demo.md -> assets/demo.png
 #   nix shell nixpkgs#sway nixpkgs#grim nixpkgs#imagemagick -c nu assets/screenshot.nu notes.md x.png --cols 90 --rows 40
+#   nix shell nixpkgs#sway nixpkgs#grim nixpkgs#imagemagick -c nu assets/screenshot.nu --light assets/demo.md assets/demo-light.png
 
 const title = "viso-screenshot"
 const assets = path self .
@@ -32,7 +33,7 @@ def wait-until [what: string, check: closure, --timeout: duration = 20sec] {
     }
 }
 
-def main [doc: string = "assets/demo.md", out: string = "assets/demo.png", --cols: int = 100, --rows: int = 45] {
+def main [doc: string = "assets/demo.md", out: string = "assets/demo.png", --cols: int = 100, --rows: int = 60, --light] {
     ^cargo build --release --quiet
     let viso = $env.PWD | path join target release viso
     let doc = $doc | path expand
@@ -42,6 +43,8 @@ def main [doc: string = "assets/demo.md", out: string = "assets/demo.png", --col
     mkdir $run
     ^chmod 700 $run
     let session = {XDG_RUNTIME_DIR: $run, WAYLAND_DISPLAY: wayland-1}
+    # base16-ocean.light's background and foreground, so the auto theme switches
+    let colors = if $light { [-o background=#eff1f5 -o foreground=#4f5b66] } else { [] }
 
     let sway = job spawn {
         with-env {XDG_RUNTIME_DIR: $run, WLR_BACKENDS: headless, WLR_RENDERER: pixman, WLR_LIBINPUT_NO_DEVICES: "1"} {
@@ -55,7 +58,7 @@ def main [doc: string = "assets/demo.md", out: string = "assets/demo.png", --col
         let kitty = job spawn {
             with-env ($session | merge {LIBGL_ALWAYS_SOFTWARE: "1", LP_NUM_THREADS: "4"}) {
                 hide-env -i DISPLAY
-                ^kitty --title $title -o remember_window_size=no -o initial_window_width=$"($cols + 2)c" -o initial_window_height=$"($rows)c" -o window_padding_width=16 -o font_size=12 sh -c $"stty -echo; tput civis; clear; sleep 1; ($viso) --width ($cols) ($doc); sleep 30" out+err> ($run | path join kitty.log)
+                ^kitty --title $title ...$colors -o remember_window_size=no -o initial_window_width=$"($cols + 2)c" -o initial_window_height=$"($rows)c" -o window_padding_width=16 -o font_size=12 sh -c $"stty -echo; tput civis; clear; sleep 1; ($viso) --width ($cols) ($doc); sleep 30" out+err> ($run | path join kitty.log)
             }
         }
         let window = {|| find-window (^swaymsg -s $sock -t get_tree | from json) }

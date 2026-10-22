@@ -1,12 +1,16 @@
 # Fourier transforms and the Gaussian
 
-A function $f(x)$ and its transform $\hat f(k)$ carry the same information. With the symmetric convention,
+A function $f(x)$ and its transform $\hat f(k)$ carry the same information. With the [symmetric convention](https://en.wikipedia.org/wiki/Fourier_transform#Unitary_convention),
 
 $$
 \hat f(k) = \frac{1}{\sqrt{2\pi}} \int_{-\infty}^{\infty} f(x) \, e^{-ikx} \, dx, \qquad f(x) = \frac{1}{\sqrt{2\pi}} \int_{-\infty}^{\infty} \hat f(k) \, e^{ikx} \, dk,
 $$
 
-and the Gaussian $e^{-x^2/2\sigma^2}$ is its own transform, with width $1/\sigma$. Three facts worth remembering:
+and the Gaussian $e^{-x^2/2\sigma^2}$ is its own transform, with width $1/\sigma$:
+
+![a Gaussian of width 2 and its transform of width 1/2](gaussian.png)
+
+Three facts worth remembering:
 
 - *Uncertainty:* $\sigma_x \sigma_k \geq \tfrac{1}{2}$, with equality **only** for Gaussians.
 - *Convolution:* $\widehat{f * g} = \sqrt{2\pi} \, \hat f \, \hat g$, so smoothing in $x$ is a multiplication in $k$.
