@@ -327,10 +327,15 @@ fn main() -> ExitCode {
 
     let blocks = md::parse(&doc);
     // with a pager the text is rendered first and handed over whole, so every image is on the
-    // terminal before the pager draws a placeholder
+    // terminal before the pager draws a placeholder. kitty keeps images per screen buffer, so the
+    // alternate screen is entered before the transfers and the pager draws on it: the view stays
+    // within the document and leaving it restores the shell, like man
     let mut page_text = Vec::new();
     let mut stdout = BufWriter::new(std::io::stdout().lock());
     let out: &mut dyn Write = if pager { &mut page_text } else { &mut stdout };
+    if pager {
+        alt_screen(tty.as_ref(), true);
+    }
     let mut renderer = render::Renderer::new(out, width, images, theme);
     renderer.hyperlinks = to_tty;
     renderer.light = light;
@@ -351,7 +356,9 @@ fn main() -> ExitCode {
     if !pager {
         return ExitCode::SUCCESS;
     }
-    match page(&page_text) {
+    let status = page(&page_text);
+    alt_screen(tty.as_ref(), false);
+    match status {
         Ok(status) => ExitCode::from(status.code().unwrap_or(1).clamp(0, 255) as u8),
         Err(e) => {
             eprintln!("viso: cannot run the pager: {e}");
@@ -360,9 +367,15 @@ fn main() -> ExitCode {
     }
 }
 
+fn alt_screen(tty: Option<&term::Tty>, on: bool) {
+    if let Some(t) = tty {
+        let _ = (&t.0).write_all(if on { b"\x1b[?1049h" } else { b"\x1b[?1049l" });
+    }
+}
+
 /// `text` through `$PAGER` (default `less -R`, split on whitespace), returning its exit status.
-/// less gets `-X`: kitty keeps images per screen buffer, so the placeholders only show on the main
-/// screen, where the transfers went. It also gets `--max-back-scroll=0 --clear-screen`, so
+/// less gets `-X`: viso has already entered the alternate screen and sent the images there, and
+/// kitty keeps images per screen buffer. It also gets `--max-back-scroll=0 --clear-screen`, so
 /// backward moves repaint instead of reverse-indexing: kitty scrolls placeholder image refs into
 /// its history and brings them back on reverse index, over whatever less draws there (kitty
 /// 0.49). `LESS` defaults to `R` so a plain `PAGER=less` shows the colors too, and
@@ -390,6 +403,8 @@ fn page(text: &[u8]) -> std::io::Result<ExitStatus> {
             .env("LESSUTFCHARDEF", chardef);
     }
     let mut child = cmd.spawn()?;
+    // Ctrl-C goes to the pager, which handles it; viso must outlive it to leave the alternate screen
+    unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN) };
     let mut stdin = child.stdin.take().expect("piped stdin");
     if let Err(e) = stdin.write_all(text)
         && e.kind() != ErrorKind::BrokenPipe

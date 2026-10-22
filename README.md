@@ -47,7 +47,7 @@ viso --debug-term           # what viso detects: size, cell pixels, colors, grap
 | `--fg RRGGBB` | math ink color | terminal foreground, via OSC 10 |
 | `--theme NAME` | syntect theme for code blocks; `auto` picks `base16-ocean.dark` or `.light` from the background | `auto` |
 | `--no-images` | print math and image files as text | off |
-| `--pager`, `-p` | page the text through `$PAGER`, default `less -R` (less 632 or newer; viso adds `-X`, since kitty shows the images only on the screen they were sent to, and `--max-back-scroll=0 --clear-screen`, since reverse-index brings back stale images in kitty) | off |
+| `--pager`, `-p` | page the text through `$PAGER`, default `less -R`, on an alternate screen viso manages, so the view stays within the document and quitting restores the shell, like `man` (less 632 or newer; viso adds `-X`, `--max-back-scroll=0` and `--clear-screen`: kitty shows images only on the screen they were sent to, and reverse-index brings back stale ones) | off |
 | `--tty` | send image transfers to `/dev/tty` instead of stdout, as `-p` does; a pager of your own must stay on the main screen and never reverse-index, e.g. `LESSUTFCHARDEF=10EEEE:p viso --tty notes.md \| less -RX --max-back-scroll=0 --clear-screen` | off |
 | `--print-config` | print every config key with its effective value | |
 | `--completions SHELL` | print a completion script for bash, zsh, fish or nushell | |
