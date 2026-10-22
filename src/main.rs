@@ -362,9 +362,12 @@ fn main() -> ExitCode {
 
 /// `text` through `$PAGER` (default `less -R`, split on whitespace), returning its exit status.
 /// less gets `-X`: kitty keeps images per screen buffer, so the placeholders only show on the main
-/// screen, where the transfers went. `LESS` defaults to `R` so a plain `PAGER=less` shows the
-/// colors too, and `LESSUTFCHARDEF` marks the placeholder character printable, since less
-/// otherwise shows it as `<U+10EEEE>`.
+/// screen, where the transfers went. It also gets `--max-back-scroll=0 --clear-screen`, so
+/// backward moves repaint instead of reverse-indexing: kitty scrolls placeholder image refs into
+/// its history and brings them back on reverse index, over whatever less draws there (kitty
+/// 0.49). `LESS` defaults to `R` so a plain `PAGER=less` shows the colors too, and
+/// `LESSUTFCHARDEF` marks the placeholder character printable, since less otherwise shows it as
+/// `<U+10EEEE>`.
 fn page(text: &[u8]) -> std::io::Result<ExitStatus> {
     let pager = std::env::var("PAGER")
         .ok()
@@ -379,7 +382,7 @@ fn page(text: &[u8]) -> std::io::Result<ExitStatus> {
             Ok(v) if !v.is_empty() => format!("{v},10EEEE:p"),
             _ => "10EEEE:p".into(),
         };
-        cmd.arg("-X")
+        cmd.args(["-X", "--max-back-scroll=0", "--clear-screen"])
             .env(
                 "LESS",
                 std::env::var_os("LESS").unwrap_or_else(|| "R".into()),
