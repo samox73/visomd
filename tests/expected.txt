@@ -1,0 +1,36 @@
+[1;34mTitle[0m
+
+[1;34mSection[0m
+
+Some [3memphasised[0m and [1mstrong[0m text with [38;5;180minline[0m [38;5;180mcode[0m and a [4mlink[0m
+[2m(https://example.com)[0m, plus math $x$, $E = \hbar\omega$, and
+a tall one $\frac{a}{b + \frac{1}{c}}$ inline.
+
+$$ \Sigma(\tau) = \int_0^\beta d\tau' \, G(\tau - \tau')
+D(\tau') $$
+
+• first item
+• second item with $k$ and more words so that this line
+  wraps around
+  1. nested one
+  2. nested two
+• third item
+
+│ A quote with $\omega_q$ in it.
+
+With some long long sample text under it. Printing
+$\omega_q$ again so we can immediately se if the subscript
+covers the next row if the paragraph goes on and on and on
+and on and on and on and on AND ON AND ON AND ON AND ON AND
+ON AND ON AND ON OVER MULTIPLE LINES.
+
+[1mquantity[0m         │         [1msymbol[0m         │ [1mvalue[0m
+─────────────────┼────────────────────────┼──────
+coupling         │        $\alpha$        │   1.5
+phonon frequency │ $\omega_{\mathrm{LO}}$ │   0.1
+
+  [38;2;180;142;173mfn[38;2;192;197;206m [38;2;143;161;179mmain[38;2;192;197;206m([38;2;192;197;206m)[38;2;192;197;206m [38;2;192;197;206m{[38;2;192;197;206m[0m
+  [38;2;192;197;206m    [38;2;192;197;206mprintln![38;2;192;197;206m([38;2;192;197;206m"[38;2;163;190;140mhello[38;2;192;197;206m"[38;2;192;197;206m)[38;2;192;197;206m;[38;2;192;197;206m[0m
+  [38;2;192;197;206m}[38;2;192;197;206m[0m
+
+────────────────────────────────────────────────────────────

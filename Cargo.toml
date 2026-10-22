@@ -1,0 +1,22 @@
+[package]
+name = "visomd"
+version = "0.1.0"
+edition = "2024"
+description = "Render Markdown in the terminal with LaTeX math typeset as inline kitty images"
+repository = "https://github.com/samox73/visomd"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "viso"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+png = "0.17"
+pulldown-cmark = { version = "0.13", default-features = false }
+ratex-layout = "0.1.15"
+ratex-parser = "0.1.15"
+ratex-render = { version = "0.1.15", features = ["embed-fonts"] }
+ratex-types = "0.1.15"
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
