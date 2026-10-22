@@ -46,9 +46,17 @@ impl Tty {
         }
     }
 
-    /// Foreground color from OSC 10, as 8-bit channels.
     pub fn fg_color(&self) -> Option<[u8; 3]> {
-        let reply = self.query(b"\x1b]10;?\x1b\\")?;
+        self.osc_color(10)
+    }
+
+    pub fn bg_color(&self) -> Option<[u8; 3]> {
+        self.osc_color(11)
+    }
+
+    /// A terminal color from OSC `n` (10: foreground, 11: background), as 8-bit channels.
+    fn osc_color(&self, n: u8) -> Option<[u8; 3]> {
+        let reply = self.query(format!("\x1b]{n};?\x1b\\").as_bytes())?;
         let reply = String::from_utf8_lossy(&reply);
         let rgb = reply.split_once("rgb:")?.1;
         let end = rgb.find(['\x1b', '\x07']).unwrap_or(rgb.len());

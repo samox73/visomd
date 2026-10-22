@@ -13,7 +13,9 @@ use std::str::FromStr;
 use clap::{CommandFactory, Parser};
 
 const DEFAULT_MAX_WIDTH: usize = 100;
-const DEFAULT_THEME: &str = "base16-ocean.dark";
+/// What `theme = "auto"` resolves to on a dark and on a light background.
+const DARK_THEME: &str = "base16-ocean.dark";
+const LIGHT_THEME: &str = "base16-ocean.light";
 
 const CONFIG_HELP: &str = "\
 Config: $XDG_CONFIG_HOME/visomd/config.toml (default ~/.config/visomd/config.toml), one `key = value`
@@ -40,7 +42,8 @@ struct Args {
     /// Display math size relative to inline math and the prose; 1 = same size, as in LaTeX [default: 1]
     #[arg(long, value_name = "F")]
     display_scale: Option<f64>,
-    /// syntect theme for code blocks [default: base16-ocean.dark]
+    /// syntect theme for code blocks; "auto" picks base16-ocean.dark or .light from the terminal
+    /// background [default: auto]
     #[arg(long, value_name = "NAME")]
     theme: Option<String>,
     /// Print every config key with its effective value, as a config file, and exit
@@ -80,7 +83,7 @@ impl Settings {
                 .theme
                 .clone()
                 .or_else(|| setting(cfg, "theme"))
-                .unwrap_or_else(|| DEFAULT_THEME.into()),
+                .unwrap_or_else(|| "auto".into()),
             fg: args.fg.clone().or_else(|| setting(cfg, "fg")),
             no_images: args.no_images || setting(cfg, "no-images").unwrap_or(false),
         }
@@ -107,7 +110,7 @@ impl Settings {
         format!(
             "{width}max-width = {}   # cap on the automatic wrap width\n\
              display-scale = {:?}   # display math size relative to inline math\n\
-             theme = {:?}   # syntect theme for code blocks\n\
+             theme = {:?}   # syntect theme for code blocks; auto: by the terminal background\n\
              {fg}no-images = {}   # print math as LaTeX instead of images\n",
             self.max_width, self.display_scale, self.theme, self.no_images
         )
@@ -221,17 +224,34 @@ fn main() -> ExitCode {
         None
     };
     let stdout_tty = std::io::stdout().is_terminal();
+    let auto_theme = settings.theme == "auto";
+    let bg_term = if args.debug_term || (auto_theme && stdout_tty) {
+        tty.as_ref().and_then(|t| t.bg_color())
+    } else {
+        None
+    };
+    let light = bg_term.is_some_and(is_light);
+    let theme = match (auto_theme, light) {
+        (false, _) => settings.theme.as_str(),
+        (true, false) => DARK_THEME,
+        (true, true) => LIGHT_THEME,
+    };
+    let hex = |c: Option<[u8; 3]>| {
+        c.map_or("unknown".into(), |[r, g, b]| {
+            format!("#{r:02x}{g:02x}{b:02x}")
+        })
+    };
 
     if args.debug_term {
         println!(
-            "cols={} rows={} cell={}x{}px fg={} graphics={} stdout_tty={}\nconfig={config_status}",
+            "cols={} rows={} cell={}x{}px fg={} bg={} light={} graphics={} stdout_tty={}\nconfig={config_status}",
             size.cols,
             size.rows,
             size.cell_w,
             size.cell_h,
-            fg_term.map_or("unknown".into(), |[r, g, b]| format!(
-                "#{r:02x}{g:02x}{b:02x}"
-            )),
+            hex(fg_term),
+            hex(bg_term),
+            if light { "yes" } else { "no" },
             graphics,
             stdout_tty
         );
@@ -277,14 +297,21 @@ fn main() -> ExitCode {
 
     let blocks = md::parse(&doc);
     let out = BufWriter::new(std::io::stdout().lock());
-    let mut renderer = render::Renderer::new(out, width, images, &settings.theme);
+    let mut renderer = render::Renderer::new(out, width, images, theme);
     renderer.hyperlinks = stdout_tty;
+    renderer.light = light;
     if let Err(e) = renderer.render(&blocks)
         && e.kind() != ErrorKind::BrokenPipe
     {
         eprintln!("viso: {e}");
     }
     ExitCode::SUCCESS
+}
+
+/// Relative luminance of an sRGB color above one half: light enough for a light theme.
+fn is_light([r, g, b]: [u8; 3]) -> bool {
+    let lum = 0.2126 * f64::from(r) + 0.7152 * f64::from(g) + 0.0722 * f64::from(b);
+    lum / 255.0 > 0.5
 }
 
 #[cfg(test)]
@@ -349,5 +376,15 @@ mod tests {
         assert_eq!(setting::<String>(&cfg, "theme").as_deref(), Some("gruvbox"));
         assert_eq!(setting::<bool>(&cfg, "no-images"), Some(true));
         assert!(!cfg.contains_key("fg"), "unset keys are commented out");
+    }
+
+    #[test]
+    fn luminance_splits_light_from_dark() {
+        assert!(is_light([255, 255, 255]));
+        assert!(is_light([0xef, 0xf1, 0xf5])); // base16-ocean.light background
+        assert!(!is_light([0, 0, 0]));
+        assert!(!is_light([0x2b, 0x30, 0x3b])); // base16-ocean.dark background
+        assert!(!is_light([0, 0, 255]), "pure blue is dark");
+        assert!(is_light([0, 255, 0]), "pure green is light");
     }
 }

@@ -11,6 +11,7 @@ use crate::{kitty, math};
 const DEFAULT_THEME: &str = "base16-ocean.dark";
 const SGR_HEADING: &str = "1;34";
 const SGR_CODE: &str = "38;5;180";
+const SGR_CODE_LIGHT: &str = "38;5;130";
 
 /// Terminal facts needed to place images. Absent → math prints as LaTeX.
 #[derive(Clone, Copy)]
@@ -26,6 +27,8 @@ pub struct Renderer<W: Write> {
     out: W,
     /// OSC 8 hyperlinks around link text instead of the URL in dim after it.
     pub hyperlinks: bool,
+    /// Light terminal background: a darker inline-code color.
+    pub light: bool,
     width: usize,
     images: Option<Images>,
     theme: String,
@@ -67,6 +70,7 @@ impl<W: Write> Renderer<W> {
         Renderer {
             out,
             hyperlinks: false,
+            light: false,
             width,
             images,
             theme: theme.to_string(),
@@ -254,10 +258,11 @@ impl<W: Write> Renderer<W> {
     }
 
     fn tokens(&mut self, inl: &[Inline], sgr: &str, toks: &mut Vec<Tok>) {
+        let code = if self.light { SGR_CODE_LIGHT } else { SGR_CODE };
         for i in inl {
             match i {
                 Inline::Text(t) => words(t, sgr, toks),
-                Inline::Code(t) => words(t, &join(sgr, SGR_CODE), toks),
+                Inline::Code(t) => words(t, &join(sgr, code), toks),
                 Inline::Emph(v) => self.tokens(v, &join(sgr, "3"), toks),
                 Inline::Strong(v) => self.tokens(v, &join(sgr, "1"), toks),
                 Inline::Link { text, url } => self.link(text, url, sgr, toks),
@@ -616,6 +621,15 @@ mod tests {
                 osc(2, "v", "c")
             )
         );
+    }
+
+    #[test]
+    fn light_terminals_get_a_darker_code_color() {
+        let mut out = Vec::new();
+        let mut r = Renderer::new(&mut out, 40, None, DEFAULT_THEME);
+        r.light = true;
+        r.render(&crate::md::parse("`x`")).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "\x1b[38;5;130mx\x1b[0m\n");
     }
 
     #[test]
