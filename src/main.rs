@@ -61,7 +61,8 @@ struct Args {
     /// Page the text through $PAGER (default `less -R`); images go to the terminal directly
     #[arg(short, long)]
     pager: bool,
-    /// Send image transfers to /dev/tty instead of stdout, for `viso --tty FILE | less -R`
+    /// Send image transfers to /dev/tty instead of stdout, as --pager does; your own pager must
+    /// then stay on the main screen (less: `-RX` and LESSUTFCHARDEF=10EEEE:p)
     #[arg(long)]
     tty: bool,
     /// Print every config key with its effective value, as a config file, and exit
