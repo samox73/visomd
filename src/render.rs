@@ -23,8 +23,10 @@ pub struct Images {
     pub display_scale: f64,
 }
 
-pub struct Renderer<W: Write> {
+pub struct Renderer<'a, W: Write> {
     out: W,
+    /// Where image transfers go, flushed per image; `None`: into `out`, ahead of the placeholder line.
+    pub transfers: Option<&'a mut dyn Write>,
     /// OSC 8 hyperlinks around link text instead of the URL in dim after it.
     pub hyperlinks: bool,
     /// Light terminal background: a darker inline-code color.
@@ -65,10 +67,11 @@ struct Line {
     transfers: String,
 }
 
-impl<W: Write> Renderer<W> {
+impl<'a, W: Write> Renderer<'a, W> {
     pub fn new(out: W, width: usize, images: Option<Images>, theme: &str) -> Self {
         Renderer {
             out,
+            transfers: None,
             hyperlinks: false,
             light: false,
             width,
@@ -78,6 +81,20 @@ impl<W: Write> Renderer<W> {
             links: 0,
             highlighter: None,
             segs: Vec::new(),
+        }
+    }
+
+    /// An image transfer: to the transfer sink if there is one, else ahead of the text.
+    fn transfer(&mut self, data: &str) -> io::Result<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        match &mut self.transfers {
+            Some(sink) => {
+                sink.write_all(data.as_bytes())?;
+                sink.flush()
+            }
+            None => self.out.write_all(data.as_bytes()),
         }
     }
 
@@ -217,7 +234,7 @@ impl<W: Write> Renderer<W> {
         let grid = table.iter().flatten().any(|cell| cell.len() > 1);
         for (r, cells) in table.iter().enumerate() {
             for line in cells.iter().flatten() {
-                self.out.write_all(line.transfers.as_bytes())?;
+                self.transfer(&line.transfers)?;
             }
             let height = cells.iter().map(Vec::len).max().unwrap_or(1);
             for k in 0..height {
@@ -250,8 +267,13 @@ impl<W: Write> Renderer<W> {
     fn paragraph(&mut self, inl: &[Inline], sgr: &str) -> io::Result<()> {
         let mut toks = Vec::new();
         self.tokens(inl, sgr, &mut toks);
-        for line in wrap(&toks, self.avail()) {
-            self.out.write_all(line.transfers.as_bytes())?;
+        self.flow(&toks)
+    }
+
+    /// Wrapped lines of `toks`, each preceded by the transfers its images need.
+    fn flow(&mut self, toks: &[Tok]) -> io::Result<()> {
+        for line in wrap(toks, self.avail()) {
+            self.transfer(&line.transfers)?;
             self.line(&line.text)?;
         }
         Ok(())
@@ -325,8 +347,7 @@ impl<W: Write> Renderer<W> {
             ) {
                 let (cols, rows) = ((c.w / img.cell_w) as u16, (c.h / img.cell_h) as u16);
                 let id = self.ids.next();
-                self.out
-                    .write_all(kitty::transmit(id, &c.png(), cols, rows).as_bytes())?;
+                self.transfer(&kitty::transmit(id, &c.png(), cols, rows))?;
                 for row in kitty::placeholder(id, cols, rows) {
                     self.line(&row)?;
                 }
@@ -630,6 +651,28 @@ mod tests {
         r.light = true;
         r.render(&crate::md::parse("`x`")).unwrap();
         assert_eq!(String::from_utf8(out).unwrap(), "\x1b[38;5;130mx\x1b[0m\n");
+    }
+
+    #[test]
+    fn transfers_go_to_their_own_sink() {
+        let img = Images {
+            cell_w: 8,
+            cell_h: 16,
+            fg: [200, 200, 200],
+            display_scale: 1.0,
+        };
+        let (mut text, mut sink) = (Vec::new(), Vec::new());
+        let mut r = Renderer::new(&mut text, 40, Some(img), DEFAULT_THEME);
+        r.transfers = Some(&mut sink);
+        r.render(&crate::md::parse("a $x$ b\n\n$$y$$")).unwrap();
+        let (text, sink) = (
+            String::from_utf8(text).unwrap(),
+            String::from_utf8(sink).unwrap(),
+        );
+        assert!(!text.contains("\x1b_G"), "{text}");
+        assert!(text.contains("\u{10EEEE}\u{305}\u{305}"), "{text}");
+        assert_eq!(sink.matches("\x1b_Ga=T,").count(), 2, "{sink}");
+        assert!(sink.ends_with("\x1b\\"));
     }
 
     #[test]

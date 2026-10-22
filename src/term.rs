@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
 use std::os::fd::AsRawFd;
 
-pub struct Tty(File);
+pub struct Tty(pub File);
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Size {

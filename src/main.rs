@@ -5,9 +5,9 @@ mod render;
 mod term;
 
 use std::collections::HashMap;
-use std::io::{BufWriter, ErrorKind, IsTerminal, Read};
+use std::io::{BufWriter, ErrorKind, IsTerminal, Read, Write};
 use std::path::PathBuf;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode, ExitStatus, Stdio};
 use std::str::FromStr;
 
 use clap::{CommandFactory, Parser};
@@ -46,6 +46,12 @@ struct Args {
     /// background [default: auto]
     #[arg(long, value_name = "NAME")]
     theme: Option<String>,
+    /// Page the text through $PAGER (default `less -R`); images go to the terminal directly
+    #[arg(short, long)]
+    pager: bool,
+    /// Send image transfers to /dev/tty instead of stdout, for `viso --tty FILE | less -R`
+    #[arg(long)]
+    tty: bool,
     /// Print every config key with its effective value, as a config file, and exit
     #[arg(long)]
     print_config: bool,
@@ -65,6 +71,7 @@ struct Settings {
     theme: String,
     fg: Option<String>,
     no_images: bool,
+    pager: bool,
 }
 
 impl Settings {
@@ -86,6 +93,7 @@ impl Settings {
                 .unwrap_or_else(|| "auto".into()),
             fg: args.fg.clone().or_else(|| setting(cfg, "fg")),
             no_images: args.no_images || setting(cfg, "no-images").unwrap_or(false),
+            pager: args.pager || setting(cfg, "pager").unwrap_or(false),
         }
     }
 
@@ -111,8 +119,9 @@ impl Settings {
             "{width}max-width = {}   # cap on the automatic wrap width\n\
              display-scale = {:?}   # display math size relative to inline math\n\
              theme = {:?}   # syntect theme for code blocks; auto: by the terminal background\n\
-             {fg}no-images = {}   # print math as LaTeX instead of images\n",
-            self.max_width, self.display_scale, self.theme, self.no_images
+             {fg}no-images = {}   # print math as LaTeX instead of images\n\
+             pager = {}   # page the text through $PAGER\n",
+            self.max_width, self.display_scale, self.theme, self.no_images, self.pager
         )
     }
 }
@@ -214,7 +223,16 @@ fn main() -> ExitCode {
         None => None,
     };
 
-    let tty = term::Tty::open();
+    let mut tty = term::Tty::open();
+    let stdout_tty = std::io::stdout().is_terminal();
+    // like git, a pager only makes sense when the text would reach a terminal
+    let pager = settings.pager && stdout_tty;
+    if pager && tty.is_none() {
+        eprintln!("viso: --pager needs a terminal (/dev/tty)");
+        return ExitCode::from(2);
+    }
+    // whether the text is for this terminal: its width, hyperlinks and background apply
+    let to_tty = stdout_tty || args.tty;
     let size = tty.as_ref().map(|t| t.size()).unwrap_or_default();
     let probe = !settings.no_images || args.debug_term;
     let graphics = probe && tty.as_ref().is_some_and(|t| t.supports_graphics());
@@ -223,9 +241,8 @@ fn main() -> ExitCode {
     } else {
         None
     };
-    let stdout_tty = std::io::stdout().is_terminal();
     let auto_theme = settings.theme == "auto";
-    let bg_term = if args.debug_term || (auto_theme && stdout_tty) {
+    let bg_term = if args.debug_term || (auto_theme && to_tty) {
         tty.as_ref().and_then(|t| t.bg_color())
     } else {
         None
@@ -276,7 +293,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let auto_width = if stdout_tty && size.cols > 0 {
+    let auto_width = if to_tty && size.cols > 0 {
         usize::from(size.cols)
     } else {
         80
@@ -296,16 +313,71 @@ fn main() -> ExitCode {
         });
 
     let blocks = md::parse(&doc);
-    let out = BufWriter::new(std::io::stdout().lock());
+    // with a pager the text is rendered first and handed over whole, so every image is on the
+    // terminal before the pager draws a placeholder
+    let mut page_text = Vec::new();
+    let mut stdout = BufWriter::new(std::io::stdout().lock());
+    let out: &mut dyn Write = if pager { &mut page_text } else { &mut stdout };
     let mut renderer = render::Renderer::new(out, width, images, theme);
-    renderer.hyperlinks = stdout_tty;
+    renderer.hyperlinks = to_tty;
     renderer.light = light;
-    if let Err(e) = renderer.render(&blocks)
+    if args.tty || pager {
+        renderer.transfers = tty.as_mut().map(|t| &mut t.0 as &mut dyn Write);
+    }
+    let rendered = renderer.render(&blocks);
+    drop(renderer);
+    if let Err(e) = rendered
         && e.kind() != ErrorKind::BrokenPipe
     {
         eprintln!("viso: {e}");
     }
-    ExitCode::SUCCESS
+    if !pager {
+        return ExitCode::SUCCESS;
+    }
+    match page(&page_text) {
+        Ok(status) => ExitCode::from(status.code().unwrap_or(1).clamp(0, 255) as u8),
+        Err(e) => {
+            eprintln!("viso: cannot run the pager: {e}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// `text` through `$PAGER` (default `less -R`, split on whitespace), returning its exit status.
+/// less gets `-X`: kitty keeps images per screen buffer, so the placeholders only show on the main
+/// screen, where the transfers went. `LESS` defaults to `R` so a plain `PAGER=less` shows the
+/// colors too, and `LESSUTFCHARDEF` marks the placeholder character printable, since less
+/// otherwise shows it as `<U+10EEEE>`.
+fn page(text: &[u8]) -> std::io::Result<ExitStatus> {
+    let pager = std::env::var("PAGER")
+        .ok()
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| "less -R".into());
+    let mut words = pager.split_whitespace();
+    let prog = words.next().unwrap_or("less");
+    let mut cmd = Command::new(prog);
+    cmd.args(words).stdin(Stdio::piped());
+    if Path::new(prog).file_name().is_some_and(|n| n == "less") {
+        let chardef = match std::env::var("LESSUTFCHARDEF") {
+            Ok(v) if !v.is_empty() => format!("{v},10EEEE:p"),
+            _ => "10EEEE:p".into(),
+        };
+        cmd.arg("-X")
+            .env(
+                "LESS",
+                std::env::var_os("LESS").unwrap_or_else(|| "R".into()),
+            )
+            .env("LESSUTFCHARDEF", chardef);
+    }
+    let mut child = cmd.spawn()?;
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    if let Err(e) = stdin.write_all(text)
+        && e.kind() != ErrorKind::BrokenPipe
+    {
+        return Err(e);
+    }
+    drop(stdin);
+    child.wait()
 }
 
 /// Relative luminance of an sRGB color above one half: light enough for a light theme.
@@ -364,6 +436,7 @@ mod tests {
             theme: "gruvbox".into(),
             fg: None,
             no_images: true,
+            pager: true,
         };
         let dir = std::env::temp_dir().join(format!("visomd-print-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -375,6 +448,7 @@ mod tests {
         assert_eq!(setting::<f64>(&cfg, "display-scale"), Some(1.5));
         assert_eq!(setting::<String>(&cfg, "theme").as_deref(), Some("gruvbox"));
         assert_eq!(setting::<bool>(&cfg, "no-images"), Some(true));
+        assert_eq!(setting::<bool>(&cfg, "pager"), Some(true));
         assert!(!cfg.contains_key("fg"), "unset keys are commented out");
     }
 
