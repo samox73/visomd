@@ -67,7 +67,8 @@ impl Tty {
     }
 
     /// Raw-mode round trip: write `request` followed by DA1, read until the DA1 reply arrives or
-    /// the terminal stays silent for 200 ms. Returns whatever arrived, if anything.
+    /// the terminal stays silent for a second
+    /// (a busy kitty or a slow SSH link can take longer than a few hundred ms to answer). Returns whatever arrived, if anything.
     fn query(&self, request: &[u8]) -> Option<Vec<u8>> {
         let _raw = Raw::enter(self.0.as_raw_fd())?;
         (&self.0).write_all(request).ok()?;
@@ -89,7 +90,7 @@ impl Tty {
     }
 }
 
-/// Raw mode guard: no echo, no line buffering, 200 ms read timeout; restored on drop.
+/// Raw mode guard: no echo, no line buffering, 1 s read timeout; restored on drop.
 struct Raw {
     fd: i32,
     saved: libc::termios,
@@ -104,7 +105,7 @@ impl Raw {
         let saved = t;
         t.c_lflag &= !(libc::ECHO | libc::ICANON);
         t.c_cc[libc::VMIN] = 0;
-        t.c_cc[libc::VTIME] = 2;
+        t.c_cc[libc::VTIME] = 10;
         if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &t) } != 0 {
             return None;
         }
