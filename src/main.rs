@@ -277,7 +277,9 @@ fn main() -> ExitCode {
 
     let blocks = md::parse(&doc);
     let out = BufWriter::new(std::io::stdout().lock());
-    if let Err(e) = render::Renderer::new(out, width, images, &settings.theme).render(&blocks)
+    let mut renderer = render::Renderer::new(out, width, images, &settings.theme);
+    renderer.hyperlinks = stdout_tty;
+    if let Err(e) = renderer.render(&blocks)
         && e.kind() != ErrorKind::BrokenPipe
     {
         eprintln!("viso: {e}");

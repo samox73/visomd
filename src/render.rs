@@ -24,10 +24,13 @@ pub struct Images {
 
 pub struct Renderer<W: Write> {
     out: W,
+    /// OSC 8 hyperlinks around link text instead of the URL in dim after it.
+    pub hyperlinks: bool,
     width: usize,
     images: Option<Images>,
     theme: String,
     ids: kitty::Ids,
+    links: u32,
     highlighter: Option<(SyntaxSet, Theme)>,
     /// Line prefix per enclosing list item or quote: what the first line gets, then the rest.
     segs: Vec<Seg>,
@@ -63,10 +66,12 @@ impl<W: Write> Renderer<W> {
     pub fn new(out: W, width: usize, images: Option<Images>, theme: &str) -> Self {
         Renderer {
             out,
+            hyperlinks: false,
             width,
             images,
             theme: theme.to_string(),
             ids: kitty::Ids::new(),
+            links: 0,
             highlighter: None,
             segs: Vec::new(),
         }
@@ -255,13 +260,28 @@ impl<W: Write> Renderer<W> {
                 Inline::Code(t) => words(t, &join(sgr, SGR_CODE), toks),
                 Inline::Emph(v) => self.tokens(v, &join(sgr, "3"), toks),
                 Inline::Strong(v) => self.tokens(v, &join(sgr, "1"), toks),
-                Inline::Link { text, url } => {
-                    self.tokens(text, &join(sgr, "4"), toks);
-                    toks.push(Tok::Space);
-                    words(&format!("({url})"), &join(sgr, "2"), toks);
-                }
+                Inline::Link { text, url } => self.link(text, url, sgr, toks),
                 Inline::Break => toks.push(Tok::Break),
                 Inline::Math(tex) => toks.push(self.math(tex, sgr)),
+            }
+        }
+    }
+
+    /// Link text underlined. With hyperlinks on, every word of it is an OSC 8 target and all of
+    /// them share one id, so a link wrapped over two lines is one hover target; otherwise the URL
+    /// follows in dim.
+    fn link(&mut self, text: &[Inline], url: &str, sgr: &str, toks: &mut Vec<Tok>) {
+        let start = toks.len();
+        self.tokens(text, &join(sgr, "4"), toks);
+        if !self.hyperlinks {
+            toks.push(Tok::Space);
+            words(&format!("({url})"), &join(sgr, "2"), toks);
+            return;
+        }
+        self.links += 1;
+        for t in &mut toks[start..] {
+            if let Tok::Word(s, _) = t {
+                *s = format!("\x1b]8;id={};{url}\x1b\\{s}\x1b]8;;\x1b\\", self.links);
             }
         }
     }
@@ -575,6 +595,26 @@ mod tests {
             rest[0].contains("\u{10EEEE}\u{30D}\u{305}"),
             "{:?}",
             rest[0]
+        );
+    }
+
+    #[test]
+    fn hyperlinks_wrap_every_word_under_one_id() {
+        let mut out = Vec::new();
+        let mut r = Renderer::new(&mut out, 40, None, DEFAULT_THEME);
+        r.hyperlinks = true;
+        r.render(&crate::md::parse("[a b](u) [c](v)")).unwrap();
+        let osc = |id: u8, url: &str, word: &str| {
+            format!("\x1b]8;id={id};{url}\x1b\\\x1b[4m{word}\x1b[0m\x1b]8;;\x1b\\")
+        };
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            format!(
+                "{} {} {}\n",
+                osc(1, "u", "a"),
+                osc(1, "u", "b"),
+                osc(2, "v", "c")
+            )
         );
     }
 

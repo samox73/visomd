@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn fixture_block_tree() {
         let b = parse(include_str!("../tests/fixture.md"));
-        assert_eq!(b.len(), 10, "{b:#?}");
+        assert_eq!(b.len(), 11, "{b:#?}");
         assert!(matches!(&b[0], Block::Heading(1, i) if i == &[Inline::Text("Title".into())]));
         assert!(matches!(&b[1], Block::Heading(2, _)));
         let Block::Paragraph(inl) = &b[2] else {
@@ -295,6 +295,7 @@ mod tests {
             matches!(&b[8], Block::Code { lang, text } if lang == "rust" && text.contains("println"))
         );
         assert_eq!(b[9], Block::Rule);
+        assert!(matches!(&b[10], Block::Paragraph(i) if i.len() == 3));
     }
 
     #[test]

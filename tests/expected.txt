@@ -34,3 +34,7 @@ phonon frequency │ $\omega_{\mathrm{LO}}$ │   0.1
   [38;2;192;197;206m}[38;2;192;197;206m[0m
 
 ────────────────────────────────────────────────────────────
+
+A paragraph with [4ma[0m [4mlink[0m [4mwhose[0m [4mtext[0m [4mis[0m [4mlong[0m [4menough[0m [4mto[0m [4mwrap[0m
+[4monto[0m [4mthe[0m [4mnext[0m [4mline[0m [4mat[0m [4msixty[0m [4mcolumns[0m
+[2m(https://example.com/a/rather/long/path)[0m in it.
