@@ -32,3 +32,7 @@ fn main() {
 ---
 
 A paragraph with [a link whose text is long enough to wrap onto the next line at sixty columns](https://example.com/a/rather/long/path) in it.
+
+![a tiny png](tiny.png)
+
+An image ![inline](tiny.jpg) with surrounding text.

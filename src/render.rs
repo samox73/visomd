@@ -1,12 +1,13 @@
 //! Block tree → styled, wrapped terminal text, with math as kitty images or raw LaTeX.
 
 use std::io::{self, Write};
+use std::path::PathBuf;
 
 use syntect::highlighting::{Style, Theme, ThemeSet};
 use syntect::parsing::SyntaxSet;
 
 use crate::md::{Alignment, Block, Inline};
-use crate::{kitty, math};
+use crate::{image, kitty, math};
 
 const DEFAULT_THEME: &str = "base16-ocean.dark";
 const SGR_HEADING: &str = "1;34";
@@ -31,6 +32,8 @@ pub struct Renderer<'a, W: Write> {
     pub hyperlinks: bool,
     /// Light terminal background: a darker inline-code color.
     pub light: bool,
+    /// Directory that relative image paths resolve against.
+    pub base: PathBuf,
     width: usize,
     images: Option<Images>,
     theme: String,
@@ -74,6 +77,7 @@ impl<'a, W: Write> Renderer<'a, W> {
             transfers: None,
             hyperlinks: false,
             light: false,
+            base: PathBuf::new(),
             width,
             images,
             theme: theme.to_string(),
@@ -160,6 +164,7 @@ impl<'a, W: Write> Renderer<'a, W> {
             }
             Block::Code { lang, text } => self.code(lang, text),
             Block::DisplayMath(tex) => self.display(tex),
+            Block::Image { alt, url } => self.image(alt, url),
             Block::Table { align, head, rows } => self.table(align, head, rows),
         }
     }
@@ -287,7 +292,9 @@ impl<'a, W: Write> Renderer<'a, W> {
                 Inline::Code(t) => words(t, &join(sgr, code), toks),
                 Inline::Emph(v) => self.tokens(v, &join(sgr, "3"), toks),
                 Inline::Strong(v) => self.tokens(v, &join(sgr, "1"), toks),
-                Inline::Link { text, url } => self.link(text, url, sgr, toks),
+                Inline::Link { text, url } | Inline::Image { alt: text, url } => {
+                    self.link(text, url, sgr, toks)
+                }
                 Inline::Break => toks.push(Tok::Break),
                 Inline::Math(tex) => toks.push(self.math(tex, sgr)),
             }
@@ -311,6 +318,28 @@ impl<'a, W: Write> Renderer<'a, W> {
                 *s = format!("\x1b]8;id={};{url}\x1b\\{s}\x1b]8;;\x1b\\", self.links);
             }
         }
+    }
+
+    /// A block image as a kitty placement scaled to the width; without images, or when the file
+    /// is not a readable PNG or JPEG, one line of the alt text with the path in dim.
+    fn image(&mut self, alt: &[Inline], url: &str) -> io::Result<()> {
+        if let Some(img) = self.images {
+            if let Some(im) = image::load(&self.base.join(url)) {
+                let (cols, rows) = image::fit(im.w, im.h, img.cell_w, img.cell_h, self.avail());
+                let id = self.ids.next();
+                self.transfer(&kitty::transmit(id, &im.png, cols, rows))?;
+                for row in kitty::placeholder(id, cols, rows) {
+                    self.line(&row)?;
+                }
+                return Ok(());
+            }
+            eprintln!("viso: cannot show {url}, printing its alt text and path");
+        }
+        let mut toks = Vec::new();
+        self.tokens(alt, "4", &mut toks);
+        toks.push(Tok::Space);
+        words(&format!("({url})"), "2", &mut toks);
+        self.flow(&toks)
     }
 
     fn math(&mut self, tex: &str, sgr: &str) -> Tok {
@@ -654,7 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn transfers_go_to_their_own_sink() {
+    fn transfers_go_to_their_own_sink_and_block_images_are_placed() {
         let img = Images {
             cell_w: 8,
             cell_h: 16,
@@ -664,15 +693,23 @@ mod tests {
         let (mut text, mut sink) = (Vec::new(), Vec::new());
         let mut r = Renderer::new(&mut text, 40, Some(img), DEFAULT_THEME);
         r.transfers = Some(&mut sink);
-        r.render(&crate::md::parse("a $x$ b\n\n$$y$$")).unwrap();
+        r.base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+        r.render(&crate::md::parse(
+            "a $x$ b\n\n$$y$$\n\n![t](tiny.png)\n\n![t](nope.png)\n\n![t](tiny.jpg) x",
+        ))
+        .unwrap();
         let (text, sink) = (
             String::from_utf8(text).unwrap(),
             String::from_utf8(sink).unwrap(),
         );
         assert!(!text.contains("\x1b_G"), "{text}");
-        assert!(text.contains("\u{10EEEE}\u{305}\u{305}"), "{text}");
-        assert_eq!(sink.matches("\x1b_Ga=T,").count(), 2, "{sink}");
+        assert_eq!(sink.matches("\x1b_Ga=T,").count(), 3, "{sink}");
         assert!(sink.ends_with("\x1b\\"));
+        let lines: Vec<&str> = text.lines().collect();
+        // the 2×2 png: one cell; the missing file and the inline image fall back to links
+        assert!(lines[4].contains("\u{10EEEE}\u{305}\u{305}") && lines[4].ends_with("\x1b[39m"));
+        assert_eq!(lines[6], "\x1b[4mt\x1b[0m \x1b[2m(nope.png)\x1b[0m");
+        assert_eq!(lines[8], "\x1b[4mt\x1b[0m \x1b[2m(tiny.jpg)\x1b[0m x");
     }
 
     #[test]

@@ -1,3 +1,4 @@
+mod image;
 mod kitty;
 mod math;
 mod md;
@@ -6,7 +7,7 @@ mod term;
 
 use std::collections::HashMap;
 use std::io::{BufWriter, ErrorKind, IsTerminal, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus, Stdio};
 use std::str::FromStr;
 
@@ -321,6 +322,10 @@ fn main() -> ExitCode {
     let mut renderer = render::Renderer::new(out, width, images, theme);
     renderer.hyperlinks = to_tty;
     renderer.light = light;
+    renderer.base = match args.file.as_deref() {
+        None | Some("-") => PathBuf::new(),
+        Some(f) => Path::new(f).parent().unwrap_or(Path::new("")).to_path_buf(),
+    };
     if args.tty || pager {
         renderer.transfers = tty.as_mut().map(|t| &mut t.0 as &mut dyn Write);
     }

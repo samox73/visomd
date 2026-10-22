@@ -20,6 +20,11 @@ pub enum Block {
     Quote(Vec<Block>),
     Rule,
     DisplayMath(String),
+    /// A paragraph that is one image and nothing else.
+    Image {
+        alt: Vec<Inline>,
+        url: String,
+    },
     Table {
         align: Vec<Alignment>,
         head: Vec<Vec<Inline>>,
@@ -33,7 +38,15 @@ pub enum Inline {
     Emph(Vec<Inline>),
     Strong(Vec<Inline>),
     Code(String),
-    Link { text: Vec<Inline>, url: String },
+    Link {
+        text: Vec<Inline>,
+        url: String,
+    },
+    /// An image among other text; rendered like a link.
+    Image {
+        alt: Vec<Inline>,
+        url: String,
+    },
     Math(String),
     Break,
 }
@@ -182,9 +195,16 @@ fn inlines(ev: &mut Events) -> (Vec<Inline>, bool) {
                 out.push(Inline::Strong(inlines(ev).0));
                 ev.next();
             }
-            Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) => {
+            Event::Start(Tag::Link { dest_url, .. }) => {
                 out.push(Inline::Link {
                     text: inlines(ev).0,
+                    url: dest_url.to_string(),
+                });
+                ev.next();
+            }
+            Event::Start(Tag::Image { dest_url, .. }) => {
+                out.push(Inline::Image {
+                    alt: inlines(ev).0,
                     url: dest_url.to_string(),
                 });
                 ev.next();
@@ -214,12 +234,18 @@ fn inlines(ev: &mut Events) -> (Vec<Inline>, bool) {
     (out, display_only && has_math)
 }
 
-fn push_paragraph(out: &mut Vec<Block>, (inl, display): (Vec<Inline>, bool)) {
+/// Display math and a lone image are promoted to blocks of their own.
+fn push_paragraph(out: &mut Vec<Block>, (mut inl, display): (Vec<Inline>, bool)) {
     if display {
         out.extend(inl.into_iter().filter_map(|i| match i {
             Inline::Math(t) => Some(Block::DisplayMath(t)),
             _ => None,
         }));
+    } else if let [Inline::Image { alt, url }] = &mut inl[..] {
+        out.push(Block::Image {
+            alt: std::mem::take(alt),
+            url: std::mem::take(url),
+        });
     } else if !inl.is_empty() {
         out.push(Block::Paragraph(inl));
     }
@@ -232,7 +258,7 @@ mod tests {
     #[test]
     fn fixture_block_tree() {
         let b = parse(include_str!("../tests/fixture.md"));
-        assert_eq!(b.len(), 11, "{b:#?}");
+        assert_eq!(b.len(), 13, "{b:#?}");
         assert!(matches!(&b[0], Block::Heading(1, i) if i == &[Inline::Text("Title".into())]));
         assert!(matches!(&b[1], Block::Heading(2, _)));
         let Block::Paragraph(inl) = &b[2] else {
@@ -296,6 +322,15 @@ mod tests {
         );
         assert_eq!(b[9], Block::Rule);
         assert!(matches!(&b[10], Block::Paragraph(i) if i.len() == 3));
+        assert_eq!(
+            b[11],
+            Block::Image {
+                alt: vec![Inline::Text("a tiny png".into())],
+                url: "tiny.png".into()
+            }
+        );
+        assert!(matches!(&b[12], Block::Paragraph(i) if i.len() == 3
+                && matches!(&i[1], Inline::Image { url, .. } if url == "tiny.jpg")));
     }
 
     #[test]
