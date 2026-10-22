@@ -17,6 +17,17 @@ const DEFAULT_MAX_WIDTH: usize = 100;
 /// What `theme = "auto"` resolves to on a dark and on a light background.
 const DARK_THEME: &str = "base16-ocean.dark";
 const LIGHT_THEME: &str = "base16-ocean.light";
+/// What `--theme` accepts: `auto` and syntect's bundled themes, which a test checks against syntect.
+const THEMES: [&str; 8] = [
+    "auto",
+    DARK_THEME,
+    LIGHT_THEME,
+    "base16-eighties.dark",
+    "base16-mocha.dark",
+    "InspiredGitHub",
+    "Solarized (dark)",
+    "Solarized (light)",
+];
 
 const CONFIG_HELP: &str = "\
 Config: $XDG_CONFIG_HOME/visomd/config.toml (default ~/.config/visomd/config.toml), one `key = value`
@@ -45,7 +56,7 @@ struct Args {
     display_scale: Option<f64>,
     /// syntect theme for code blocks; "auto" picks base16-ocean.dark or .light from the terminal
     /// background [default: auto]
-    #[arg(long, value_name = "NAME")]
+    #[arg(long, value_name = "NAME", value_parser = THEMES)]
     theme: Option<String>,
     /// Page the text through $PAGER (default `less -R`); images go to the terminal directly
     #[arg(short, long)]
@@ -424,6 +435,10 @@ mod tests {
         for shell in ["bash", "zsh", "fish", "nushell"] {
             let script = String::from_utf8(completions(shell)).unwrap();
             assert!(script.contains("display-scale"), "{shell}: {script}");
+            assert!(
+                script.contains("InspiredGitHub"),
+                "{shell}: theme values: {script}"
+            );
         }
         assert!(
             String::from_utf8(completions("nushell"))
@@ -455,6 +470,18 @@ mod tests {
         assert_eq!(setting::<bool>(&cfg, "no-images"), Some(true));
         assert_eq!(setting::<bool>(&cfg, "pager"), Some(true));
         assert!(!cfg.contains_key("fg"), "unset keys are commented out");
+    }
+
+    #[test]
+    fn theme_names_are_syntects_bundled_ones() {
+        let mut listed: Vec<&str> = THEMES[1..].to_vec();
+        listed.sort_unstable();
+        let mut bundled: Vec<String> = syntect::highlighting::ThemeSet::load_defaults()
+            .themes
+            .into_keys()
+            .collect();
+        bundled.sort_unstable();
+        assert_eq!(listed, bundled);
     }
 
     #[test]
