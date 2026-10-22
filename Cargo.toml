@@ -1,6 +1,6 @@
 [package]
 name = "visomd"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 description = "Render Markdown in the terminal with LaTeX math typeset as inline kitty images"
 repository = "https://github.com/samox73/visomd"
