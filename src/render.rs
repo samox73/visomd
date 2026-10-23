@@ -38,6 +38,10 @@ pub struct Renderer<'a, W: Write> {
     images: Option<Images>,
     theme: String,
     ids: kitty::Ids,
+    /// Every image id transmitted so far, for a pager that deletes them before a new layout.
+    pub used_ids: Vec<u32>,
+    /// Lines written so far.
+    pub lines: usize,
     links: u32,
     highlighter: Option<(SyntaxSet, Theme)>,
     /// Line prefix per enclosing list item or quote: what the first line gets, then the rest.
@@ -82,6 +86,8 @@ impl<'a, W: Write> Renderer<'a, W> {
             images,
             theme: theme.to_string(),
             ids: kitty::Ids::new(),
+            used_ids: Vec::new(),
+            lines: 0,
             links: 0,
             highlighter: None,
             segs: Vec::new(),
@@ -103,8 +109,28 @@ impl<'a, W: Write> Renderer<'a, W> {
     }
 
     pub fn render(&mut self, blocks: &[Block]) -> io::Result<()> {
-        self.blocks(blocks, false)?;
-        self.out.flush()
+        self.render_blocks(blocks).map(|_| ())
+    }
+
+    /// `render`, also returning the first output line of each block (its leading blank line
+    /// included), so a pager can find the same block in another layout.
+    pub fn render_blocks(&mut self, blocks: &[Block]) -> io::Result<Vec<usize>> {
+        let mut starts = Vec::with_capacity(blocks.len());
+        for (i, b) in blocks.iter().enumerate() {
+            starts.push(self.lines);
+            if i > 0 {
+                self.line("")?;
+            }
+            self.block(b)?;
+        }
+        self.out.flush()?;
+        Ok(starts)
+    }
+
+    fn next_id(&mut self) -> u32 {
+        let id = self.ids.next();
+        self.used_ids.push(id);
+        id
     }
 
     /// Blocks separated by blank lines; in a tight context a list hugs the paragraph before it.
@@ -326,7 +352,7 @@ impl<'a, W: Write> Renderer<'a, W> {
         if let Some(img) = self.images {
             if let Some(im) = image::load(&self.base.join(url)) {
                 let (cols, rows) = image::fit(im.w, im.h, img.cell_w, img.cell_h, self.avail());
-                let id = self.ids.next();
+                let id = self.next_id();
                 self.transfer(&kitty::transmit(id, &im.png, cols, rows))?;
                 for row in kitty::placeholder(id, cols, rows) {
                     self.line(&row)?;
@@ -347,7 +373,7 @@ impl<'a, W: Write> Renderer<'a, W> {
             if let Some(c) = math::inline(tex, img.cell_w, img.cell_h, img.fg) {
                 let cols = (c.w / img.cell_w) as usize;
                 if cols <= kitty::MAX_CELLS {
-                    let id = self.ids.next();
+                    let id = self.next_id();
                     return Tok::Math {
                         cols,
                         transfer: kitty::transmit(id, &c.png(), cols as u16, 1),
@@ -375,7 +401,7 @@ impl<'a, W: Write> Renderer<'a, W> {
                 img.fg,
             ) {
                 let (cols, rows) = ((c.w / img.cell_w) as u16, (c.h / img.cell_h) as u16);
-                let id = self.ids.next();
+                let id = self.next_id();
                 self.transfer(&kitty::transmit(id, &c.png(), cols, rows))?;
                 for row in kitty::placeholder(id, cols, rows) {
                     self.line(&row)?;
@@ -438,6 +464,7 @@ impl<'a, W: Write> Renderer<'a, W> {
 
     fn line(&mut self, text: &str) -> io::Result<()> {
         let p = self.prefix();
+        self.lines += 1;
         writeln!(self.out, "{}", format!("{p}{text}").trim_end())
     }
 }
@@ -710,6 +737,18 @@ mod tests {
         assert!(lines[4].contains("\u{10EEEE}\u{305}\u{305}") && lines[4].ends_with("\x1b[39m"));
         assert_eq!(lines[6], "\x1b[4mt\x1b[0m \x1b[2m(nope.png)\x1b[0m");
         assert_eq!(lines[8], "\x1b[4mt\x1b[0m \x1b[2m(tiny.jpg)\x1b[0m x");
+    }
+
+    #[test]
+    fn block_starts_count_the_separating_blank_line() {
+        let mut out = Vec::new();
+        let mut r = Renderer::new(&mut out, 40, None, DEFAULT_THEME);
+        let starts = r
+            .render_blocks(&crate::md::parse("a\n\nb\nb\n\n- c\n- d"))
+            .unwrap();
+        assert_eq!(starts, [0, 1, 3]);
+        assert_eq!(r.lines, 6);
+        assert_eq!(String::from_utf8(out).unwrap(), "a\n\nb b\n\n• c\n• d\n");
     }
 
     #[test]

@@ -2,13 +2,14 @@ mod image;
 mod kitty;
 mod math;
 mod md;
+mod pager;
 mod render;
 mod term;
 
 use std::collections::HashMap;
 use std::io::{BufWriter, ErrorKind, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode, ExitStatus, Stdio};
+use std::process::ExitCode;
 use std::str::FromStr;
 
 use clap::{CommandFactory, Parser};
@@ -58,7 +59,8 @@ struct Args {
     /// background [default: auto]
     #[arg(long, value_name = "NAME", value_parser = THEMES)]
     theme: Option<String>,
-    /// Page the text through $PAGER (default `less -R`); images go to the terminal directly
+    /// Page the output: j/k, space/b, d/u, g/G move, / n N search, q quits; the layout follows
+    /// the window
     #[arg(short, long)]
     pager: bool,
     /// Send image transfers to /dev/tty instead of stdout, as --pager does; your own pager must
@@ -133,7 +135,7 @@ impl Settings {
              display-scale = {:?}   # display math size relative to inline math\n\
              theme = {:?}   # syntect theme for code blocks; auto: by the terminal background\n\
              {fg}no-images = {}   # print math as LaTeX instead of images\n\
-             pager = {}   # page the text through $PAGER\n",
+             pager = {}   # page the output\n",
             self.max_width, self.display_scale, self.theme, self.no_images, self.pager
         )
     }
@@ -326,93 +328,62 @@ fn main() -> ExitCode {
         });
 
     let blocks = md::parse(&doc);
-    // with a pager the text is rendered first and handed over whole, so every image is on the
-    // terminal before the pager draws a placeholder. kitty keeps images per screen buffer, so the
-    // alternate screen is entered before the transfers and the pager draws on it: the view stays
-    // within the document and leaving it restores the shell, like man
-    let mut page_text = Vec::new();
-    let mut stdout = BufWriter::new(std::io::stdout().lock());
-    let out: &mut dyn Write = if pager { &mut page_text } else { &mut stdout };
-    if pager {
-        alt_screen(tty.as_ref(), true);
-    }
-    let mut renderer = render::Renderer::new(out, width, images, theme);
-    renderer.hyperlinks = to_tty;
-    renderer.light = light;
-    renderer.base = match args.file.as_deref() {
+    let base = match args.file.as_deref() {
         None | Some("-") => PathBuf::new(),
         Some(f) => Path::new(f).parent().unwrap_or(Path::new("")).to_path_buf(),
     };
-    if args.tty || pager {
+    if pager {
+        // the pager lays the document out itself, again after every resize; the images go to
+        // the terminal as each layout is rendered, onto the alternate screen the pager owns
+        let name = args
+            .file
+            .as_deref()
+            .filter(|f| *f != "-")
+            .unwrap_or("stdin");
+        let mut render = |cols: u16, transfers: &mut dyn Write| {
+            let cols = if cols == 0 { 80 } else { usize::from(cols) };
+            let width = settings
+                .width
+                .unwrap_or(cols.min(settings.max_width))
+                .max(1);
+            let mut text = Vec::new();
+            let mut r = render::Renderer::new(&mut text, width, images, theme);
+            r.hyperlinks = true;
+            r.light = light;
+            r.base = base.clone();
+            r.transfers = Some(transfers);
+            let starts = r.render_blocks(&blocks)?;
+            let ids = std::mem::take(&mut r.used_ids);
+            drop(r);
+            let lines = String::from_utf8_lossy(&text)
+                .lines()
+                .map(str::to_string)
+                .collect();
+            Ok(pager::Layout { lines, starts, ids })
+        };
+        let tty = tty.as_ref().expect("checked above");
+        return match pager::run(tty, name, &mut render) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("viso: pager: {e}");
+                ExitCode::from(1)
+            }
+        };
+    }
+    let out = BufWriter::new(std::io::stdout().lock());
+    let mut renderer = render::Renderer::new(out, width, images, theme);
+    renderer.hyperlinks = to_tty;
+    renderer.light = light;
+    renderer.base = base;
+    if args.tty {
         renderer.transfers = tty.as_mut().map(|t| &mut t.0 as &mut dyn Write);
     }
-    let rendered = renderer.render(&blocks);
-    drop(renderer);
-    if let Err(e) = rendered
+    if let Err(e) = renderer.render(&blocks)
         && e.kind() != ErrorKind::BrokenPipe
     {
         eprintln!("viso: {e}");
     }
-    if !pager {
-        return ExitCode::SUCCESS;
-    }
-    let status = page(&page_text);
-    alt_screen(tty.as_ref(), false);
-    match status {
-        Ok(status) => ExitCode::from(status.code().unwrap_or(1).clamp(0, 255) as u8),
-        Err(e) => {
-            eprintln!("viso: cannot run the pager: {e}");
-            ExitCode::from(1)
-        }
-    }
-}
-
-fn alt_screen(tty: Option<&term::Tty>, on: bool) {
-    if let Some(t) = tty {
-        let _ = (&t.0).write_all(if on { b"\x1b[?1049h" } else { b"\x1b[?1049l" });
-    }
-}
-
-/// `text` through `$PAGER` (default `less -R`, split on whitespace), returning its exit status.
-/// less gets `-X`: viso has already entered the alternate screen and sent the images there, and
-/// kitty keeps images per screen buffer. It also gets `--max-back-scroll=0 --clear-screen`, so
-/// backward moves repaint instead of reverse-indexing: kitty scrolls placeholder image refs into
-/// its history and brings them back on reverse index, over whatever less draws there (kitty
-/// 0.49). `LESS` defaults to `R` so a plain `PAGER=less` shows the colors too, and
-/// `LESSUTFCHARDEF` marks the placeholder character printable, since less otherwise shows it as
-/// `<U+10EEEE>`.
-fn page(text: &[u8]) -> std::io::Result<ExitStatus> {
-    let pager = std::env::var("PAGER")
-        .ok()
-        .filter(|p| !p.trim().is_empty())
-        .unwrap_or_else(|| "less -R".into());
-    let mut words = pager.split_whitespace();
-    let prog = words.next().unwrap_or("less");
-    let mut cmd = Command::new(prog);
-    cmd.args(words).stdin(Stdio::piped());
-    if Path::new(prog).file_name().is_some_and(|n| n == "less") {
-        let chardef = match std::env::var("LESSUTFCHARDEF") {
-            Ok(v) if !v.is_empty() => format!("{v},10EEEE:p"),
-            _ => "10EEEE:p".into(),
-        };
-        cmd.args(["-X", "--max-back-scroll=0", "--clear-screen"])
-            .env(
-                "LESS",
-                std::env::var_os("LESS").unwrap_or_else(|| "R".into()),
-            )
-            .env("LESSUTFCHARDEF", chardef);
-    }
-    let mut child = cmd.spawn()?;
-    // Ctrl-C goes to the pager, which handles it; viso must outlive it to leave the alternate screen
-    unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN) };
-    let mut stdin = child.stdin.take().expect("piped stdin");
-    if let Err(e) = stdin.write_all(text)
-        && e.kind() != ErrorKind::BrokenPipe
-    {
-        return Err(e);
-    }
-    drop(stdin);
-    child.wait()
+    ExitCode::SUCCESS
 }
 
 /// Relative luminance of an sRGB color above one half: light enough for a light theme.

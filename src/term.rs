@@ -7,7 +7,7 @@ use std::os::fd::AsRawFd;
 
 pub struct Tty(pub File);
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Size {
     pub cols: u16,
     pub rows: u16,
@@ -68,6 +68,11 @@ impl Tty {
         Some([channels.next()??, channels.next()??, channels.next()??])
     }
 
+    /// Raw mode for reading keys, until the guard drops.
+    pub fn raw_keys(&self) -> Option<Raw> {
+        Raw::enter(self.0.as_raw_fd(), true)
+    }
+
     /// Whether the terminal answers a kitty graphics query.
     pub fn supports_graphics(&self) -> bool {
         self.query(b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\")
@@ -78,7 +83,7 @@ impl Tty {
     /// the terminal stays silent for a second
     /// (a busy kitty or a slow SSH link can take longer than a few hundred ms to answer). Returns whatever arrived, if anything.
     fn query(&self, request: &[u8]) -> Option<Vec<u8>> {
-        let _raw = Raw::enter(self.0.as_raw_fd())?;
+        let _raw = Raw::enter(self.0.as_raw_fd(), false)?;
         (&self.0).write_all(request).ok()?;
         (&self.0).write_all(DA1).ok()?;
         let mut reply = Vec::new();
@@ -98,22 +103,28 @@ impl Tty {
     }
 }
 
-/// Raw mode guard: no echo, no line buffering, 1 s read timeout; restored on drop.
-struct Raw {
+/// Raw mode guard: no echo, no line buffering, reads that give up after a while; restored on
+/// drop. For queries the wait is one second of silence; for keys it is half a second, so a
+/// resize flag gets noticed, and Ctrl-C, Ctrl-Z, flow control and CR translation are off too.
+pub struct Raw {
     fd: i32,
     saved: libc::termios,
 }
 
 impl Raw {
-    fn enter(fd: i32) -> Option<Raw> {
+    fn enter(fd: i32, keys: bool) -> Option<Raw> {
         let mut t: libc::termios = unsafe { std::mem::zeroed() };
         if unsafe { libc::tcgetattr(fd, &mut t) } != 0 {
             return None;
         }
         let saved = t;
         t.c_lflag &= !(libc::ECHO | libc::ICANON);
+        if keys {
+            t.c_lflag &= !(libc::ISIG | libc::IEXTEN);
+            t.c_iflag &= !(libc::IXON | libc::ICRNL);
+        }
         t.c_cc[libc::VMIN] = 0;
-        t.c_cc[libc::VTIME] = 10;
+        t.c_cc[libc::VTIME] = if keys { 5 } else { 10 };
         if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &t) } != 0 {
             return None;
         }

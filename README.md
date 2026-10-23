@@ -14,7 +14,7 @@
 
 - **Math that lines up.** Inline formulas share the prose's baseline and x-height. Display formulas are set in TeX display style and scaled to the width.
 - **The Markdown you already write.** Headings, emphasis, inline code, links, nested and ordered lists, block quotes, rules, syntax-highlighted code blocks, and tables with aligned columns and wrapping cells. Math uses the `$...$` and `$$...$$` syntax of GitHub and pandoc.
-- **Images, links and a pager.** `![alt](figure.png)` on a line of its own is shown through the same kitty path, PNG as it is and JPEG re-encoded, scaled to the width. Links are OSC 8 hyperlinks, clickable in the terminal. `viso -p` pages the text through `$PAGER` while the images stay on the terminal, so they scroll with the text.
+- **Images, links and a pager.** `![alt](figure.png)` on a line of its own is shown through the same kitty path, PNG as it is and JPEG re-encoded, scaled to the width. Links are OSC 8 hyperlinks, clickable in the terminal. `viso -p` pages the note in a built-in pager with the usual less keys, and lays it out again whenever the window changes size.
 - **Light terminals too.** The background is queried, and the code theme and inline-code color follow it.
 - **Nothing to install besides the binary.** KaTeX fonts and syntax definitions are compiled in; the terminal does the rest.
 - **Degrades cleanly.** Without graphics support, or with `--no-images`, formulas print as LaTeX source.
@@ -34,7 +34,7 @@ cargo install --git https://github.com/samox73/visomd --locked   # the binary is
 ```sh
 viso notes.md
 cat notes.md | viso
-viso -p notes.md            # page through $PAGER (less -R); images stay on the terminal
+viso -p notes.md            # page: j/k, space/b, d/u, g/G, / n N, q; re-laid out on resize
 viso --no-images notes.md   # LaTeX source instead of images
 viso --debug-term           # what viso detects: size, cell pixels, colors, graphics, config
 ```
@@ -47,7 +47,7 @@ viso --debug-term           # what viso detects: size, cell pixels, colors, grap
 | `--fg RRGGBB` | math ink color | terminal foreground, via OSC 10 |
 | `--theme NAME` | syntect theme for code blocks; `auto` picks `base16-ocean.dark` or `.light` from the background | `auto` |
 | `--no-images` | print math and image files as text | off |
-| `--pager`, `-p` | page the text through `$PAGER`, default `less -R`, on an alternate screen viso manages, so the view stays within the document and quitting restores the shell, like `man` (less 632 or newer; viso adds `-X`, `--max-back-scroll=0` and `--clear-screen`: kitty shows images only on the screen they were sent to, and reverse-index brings back stale ones) | off |
+| `--pager`, `-p` | page in the built-in pager: `j`/`k`, space/`b`, `d`/`u`, `g`/`G`, arrows, wheel; `/` searches, `n`/`N` repeat; `q` quits. On a resize the note is laid out again at the new width, same block | off |
 | `--tty` | send image transfers to `/dev/tty` instead of stdout, as `-p` does; a pager of your own must stay on the main screen and never reverse-index, e.g. `LESSUTFCHARDEF=10EEEE:p viso --tty notes.md \| less -RX --max-back-scroll=0 --clear-screen` | off |
 | `--print-config` | print every config key with its effective value | |
 | `--completions SHELL` | print a completion script for bash, zsh, fish or nushell | |
@@ -80,7 +80,7 @@ Inline formulas are set in TeX text style at the size where the math font's x-he
 - Only KaTeX's command set is available: `\bra`, `\ket` and `\braket` are in, the `physics` package is not.
 - Images are PNG or JPEG files; SVG, GIF and remote URLs print as links, and an image inside a sentence is a link too. Images are sent at full size, so a 12-megapixel photo is a 16 MB transfer.
 - Footnotes and raw HTML are printed as text. No tmux passthrough, no sixel or iTerm2 protocols.
-- The design records are in [plans/](plans/): [0.1.0](plans/closed/0.1.0.md) for the math pipeline, [0.2.0](plans/active/0.2.0.md) for images, the pager, links and light terminals.
+- The design records are in [plans/](plans/): [0.1.0](plans/closed/0.1.0.md) for the math pipeline, [0.2.0](plans/closed/0.2.0.md) for images, the pager, links and light terminals, [0.3.0](plans/active/0.3.0.md) for the built-in pager.
 
 ## Development
 
