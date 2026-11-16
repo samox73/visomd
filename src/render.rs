@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use syntect::highlighting::{Style, Theme, ThemeSet};
 use syntect::parsing::SyntaxSet;
+use unicode_width::UnicodeWidthStr;
 
 use crate::md::{Alignment, Block, Inline};
 use crate::{image, kitty, math};
@@ -487,7 +488,7 @@ fn join(a: &str, b: &str) -> String {
 }
 
 fn styled(word: &str, sgr: &str) -> Tok {
-    let n = word.chars().count();
+    let n = word.width();
     if sgr.is_empty() {
         Tok::Word(word.to_string(), n)
     } else {
@@ -601,6 +602,19 @@ mod tests {
             render("> | x |\n> |---|\n> | $y$ |\n", 40),
             "│ \x1b[1mx\x1b[0m\n│ ───\n│ $y$\n"
         );
+    }
+
+    #[test]
+    fn tables_count_wide_characters_as_two_columns() {
+        // ✅ is wide; ⚠️ is a narrow character widened by its variation selector
+        let got = render("| a | b |\n|---|---|\n| ✅ | x |\n| ⚠️ | y |\n| zz | z |\n", 40);
+        let bold = |s: &str| format!("\x1b[1m{s}\x1b[0m");
+        let expected = format!(
+            "{}  │ {}\n───┼──\n✅ │ x\n⚠️ │ y\nzz │ z\n",
+            bold("a"),
+            bold("b")
+        );
+        assert_eq!(got, expected);
     }
 
     #[test]
