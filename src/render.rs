@@ -607,7 +607,10 @@ mod tests {
     #[test]
     fn tables_count_wide_characters_as_two_columns() {
         // ✅ is wide; ⚠️ is a narrow character widened by its variation selector
-        let got = render("| a | b |\n|---|---|\n| ✅ | x |\n| ⚠️ | y |\n| zz | z |\n", 40);
+        let got = render(
+            "| a | b |\n|---|---|\n| ✅ | x |\n| ⚠️ | y |\n| zz | z |\n",
+            40,
+        );
         let bold = |s: &str| format!("\x1b[1m{s}\x1b[0m");
         let expected = format!(
             "{}  │ {}\n───┼──\n✅ │ x\n⚠️ │ y\nzz │ z\n",
